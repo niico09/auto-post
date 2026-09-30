@@ -1,0 +1,12 @@
+[package]
+name = "auto-post-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "auto-post"
+path = "src/main.rs"
+
+[dependencies]
+auto-post-core = { path = "../auto-post-core" }

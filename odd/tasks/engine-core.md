@@ -24,7 +24,7 @@ Rust workspace, crates: `auto-post-core` (lib), `auto-post-cli` (bin). reqwest +
 - [x] T3 HTTP executor behind `HttpClient` trait + response extraction
 - [x] T4 Workflow runner: sequential steps, chaining, nested workflows
 - [x] T5 Recovery/retry (on_status -> run workflow -> retry step)
-- [ ] T6 CLI (`run`, `validate`) + example manifests + README
+- [x] T6 CLI (`run`, `validate`) + example manifests + README
 
 ## Route declaration
 Delegated direct: one writer per task group (2+ non-trivial files, writer trigger).
@@ -32,7 +32,8 @@ Delegated direct: one writer per task group (2+ non-trivial files, writer trigge
 ## Progress / evidence
 - T1 bdfaf73, T2 7a747cc, T3 b877a18, T4 fe9dfe6, T5 129696a (branch feat/engine-core).
 - Checks: cargo fmt --all --check ok; cargo clippy --workspace --all-targets -- -D warnings ok; cargo test --workspace 42 passed.
+- T6: 78709ed (core: default 30s timeout), 43bcae6 (cli + examples/basic + tests), README commit (docs). Checks: fmt ok; clippy -D warnings ok; cargo test --workspace 44 core + 14 cli passed; `validate --dir examples/basic` -> OK: 3 request(s), 2 workflow(s).
 - Step model additions: `set_global` (map name -> template, applied after step success), step-level `extract`, workflow `inputs`/`outputs`. Non-2xx without matching `on_status` => UnexpectedStatus error.
 
 ## Next step
-T6
+Feature complete on branch feat/engine-core; user decides push/PR (delivery: ask-on-risk).

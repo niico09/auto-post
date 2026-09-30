@@ -5,4 +5,5 @@ pub mod extract;
 pub mod http;
 pub mod manifest;
 pub mod path;
+pub mod runner;
 pub mod template;

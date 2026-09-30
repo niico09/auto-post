@@ -1,5 +1,8 @@
-//! Placeholder binary; the real CLI arrives in task T6.
+//! Thin entry point: everything testable lives in the library.
 
-fn main() {
-    println!("auto-post: CLI not implemented yet");
+use std::process::ExitCode;
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    auto_post_cli::main_exit(std::env::args_os()).await
 }

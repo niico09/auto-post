@@ -1,0 +1,23 @@
+{
+  "locals": { "api": "{{globals.base_url}}" },
+  "steps": [
+    { "id": "session", "workflow": "login" },
+    {
+      "id": "me",
+      "request": "get_profile",
+      "with": { "base_url": "{{locals.api}}", "token": "{{globals.token}}" },
+      "on_status": { "401": { "run": "login", "then": "retry", "max": 1 } }
+    },
+    {
+      "id": "rotate",
+      "request": "refresh",
+      "with": { "base_url": "{{locals.api}}", "token": "{{globals.token}}" },
+      "set_global": { "token": "{{steps.rotate.token}}" }
+    }
+  ],
+  "outputs": {
+    "name": "{{steps.me.name}}",
+    "email": "{{steps.me.email}}",
+    "token": "{{globals.token}}"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "id": "authenticate",
+      "request": "login",
+      "with": {
+        "base_url": "{{globals.base_url}}",
+        "username": "{{globals.username}}",
+        "password": "{{globals.password}}"
+      },
+      "set_global": { "token": "{{steps.authenticate.token}}" }
+    }
+  ],
+  "outputs": { "token": "{{steps.authenticate.token}}" }
+}

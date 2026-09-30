@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "{{inputs.base_url}}/me",
+  "headers": { "Authorization": "Bearer {{inputs.token}}" },
+  "inputs": { "base_url": {}, "token": {} },
+  "outputs": {
+    "name": { "from": "body", "path": "$.name" },
+    "email": { "from": "body", "path": "$.email" }
+  }
+}

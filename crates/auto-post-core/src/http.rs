@@ -2,6 +2,7 @@
 //! tests inject fakes and the real transport ([`ReqwestClient`]) is swappable.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -77,15 +78,41 @@ pub trait HttpClient: Send + Sync {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpError>;
 }
 
+/// Request timeout applied by [`ReqwestClient::default`].
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Production [`HttpClient`] backed by `reqwest`.
-#[derive(Debug, Clone, Default)]
+///
+/// `Default` applies [`DEFAULT_TIMEOUT`] to the whole request (connect,
+/// send and body), so a stalled server surfaces as [`HttpError::Transport`]
+/// instead of hanging a workflow forever.
+#[derive(Debug, Clone)]
 pub struct ReqwestClient {
     client: reqwest::Client,
 }
 
 impl ReqwestClient {
+    /// Wraps a preconfigured client (its own timeout settings apply).
     pub fn new(client: reqwest::Client) -> Self {
         Self { client }
+    }
+
+    /// Builds a client that aborts any request exceeding `timeout`.
+    pub fn with_timeout(timeout: Duration) -> Result<Self, HttpError> {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|error| HttpError::Transport {
+                url: String::new(),
+                message: format!("cannot build HTTP client: {error}"),
+            })?;
+        Ok(Self { client })
+    }
+}
+
+impl Default for ReqwestClient {
+    fn default() -> Self {
+        Self::with_timeout(DEFAULT_TIMEOUT).expect("default HTTP client configuration is valid")
     }
 }
 
@@ -140,6 +167,29 @@ mod tests {
         assert_eq!(response.header("x-token"), Some("abc"));
         assert_eq!(response.header("X-TOKEN"), Some("abc"));
         assert_eq!(response.header("other"), None);
+    }
+
+    #[test]
+    fn default_timeout_is_thirty_seconds() {
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(30));
+        let _ = ReqwestClient::default();
+    }
+
+    #[tokio::test]
+    async fn stalled_server_times_out_as_transport_error() {
+        // Accepts the connection but never answers.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let client = ReqwestClient::with_timeout(Duration::from_millis(150)).unwrap();
+        let request = HttpRequest {
+            method: HttpMethod::Get,
+            url: url.clone(),
+            headers: BTreeMap::new(),
+            body: None,
+        };
+        let error = client.send(request).await.unwrap_err();
+        assert!(matches!(&error, HttpError::Transport { url: u, .. } if *u == url));
+        drop(listener);
     }
 
     #[test]

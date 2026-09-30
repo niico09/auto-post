@@ -5,6 +5,7 @@
 //! across the whole execution.
 
 mod error;
+mod recovery;
 mod request;
 
 #[cfg(test)]
@@ -22,6 +23,7 @@ use crate::manifest::{Extractor, Project, RequestDef, Step, StepTarget};
 use crate::template::{resolve_map, Scopes};
 
 pub use error::RunError;
+use recovery::RecoveryTracker;
 use request::{bind_inputs, build_request};
 
 type JsonMap = Map<String, Value>;
@@ -133,18 +135,35 @@ impl<'a> Runner<'a> {
             .project
             .request(request_name)
             .ok_or_else(|| RunError::UnknownRequest(request_name.to_owned()))?;
-        // Bindings are re-resolved on every attempt so a retry sees globals
-        // changed by recovery.
-        let with = resolve_map(&step.with, &run.scopes(globals))?;
-        let inputs = bind_inputs(request_name, &def.inputs, with)?;
-        let response = self.http.send(build_request(def, &inputs)?).await?;
-        if !(200..300).contains(&response.status()) {
-            return Err(RunError::UnexpectedStatus {
-                request: request_name.to_owned(),
-                status: response.status(),
-            });
+        let mut recovery = RecoveryTracker::default();
+        loop {
+            // Bindings are re-resolved on every attempt so a retry sees
+            // globals changed by recovery.
+            let with = resolve_map(&step.with, &run.scopes(globals))?;
+            let inputs = bind_inputs(request_name, &def.inputs, with)?;
+            let response = self.http.send(build_request(def, &inputs)?).await?;
+            let status = response.status();
+
+            if let Some(policy) = step.on_status.get(&status) {
+                recovery.register(request_name, status, policy)?;
+                // `then: retry` is the only action: loop to re-run this step.
+                self.run_workflow(&policy.run, Map::new(), globals)
+                    .await
+                    .map_err(|source| RunError::RecoveryFailed {
+                        run: policy.run.clone(),
+                        status,
+                        source: Box::new(source),
+                    })?;
+                continue;
+            }
+            if !(200..300).contains(&status) {
+                return Err(RunError::UnexpectedStatus {
+                    request: request_name.to_owned(),
+                    status,
+                });
+            }
+            return extract_outputs(def, step, &response);
         }
-        extract_outputs(def, step, &response)
     }
 }
 

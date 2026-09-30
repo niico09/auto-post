@@ -297,3 +297,141 @@ async fn unexpected_status_without_recovery_fails_with_step_context() {
         RunError::UnexpectedStatus { status: 500, .. }
     ));
 }
+
+fn recovery_project(max: u32) -> Project {
+    project(
+        json!({
+            "login": {
+                "method": "POST", "url": "http://api/login",
+                "outputs": {"token": {"from": "body", "path": "$.token"}}
+            },
+            "profile": {
+                "method": "GET", "url": "http://api/me",
+                "headers": {"Authorization": "Bearer {{inputs.token}}"},
+                "inputs": {"token": {}},
+                "outputs": {"name": {"from": "body", "path": "$.name"}}
+            }
+        }),
+        json!({
+            "relogin": {"steps": [
+                {"id": "do_login", "request": "login",
+                 "set_global": {"token": "{{steps.do_login.token}}"}}
+            ]},
+            "main": {"steps": [
+                {"id": "me", "request": "profile", "with": {"token": "{{globals.token}}"},
+                 "on_status": {"401": {"run": "relogin", "then": "retry", "max": max}}},
+                {"id": "again", "request": "profile", "with": {"token": "{{globals.token}}"}}
+            ], "outputs": {"name": "{{steps.again.name}}"}}
+        }),
+    )
+}
+
+fn auth_server() -> FakeHttp {
+    FakeHttp::new(|request| {
+        if request.url.ends_with("/login") {
+            return reply(200, json!({"token": "fresh"}));
+        }
+        match request.headers.get("Authorization").map(String::as_str) {
+            Some("Bearer fresh") => reply(200, json!({"name": "ada"})),
+            _ => reply(401, json!({"error": "expired"})),
+        }
+    })
+}
+
+#[tokio::test]
+async fn status_401_runs_login_updates_global_token_and_retries_the_step() {
+    let project = recovery_project(1);
+    let http = auth_server();
+    let mut globals = object(json!({"token": "stale"}));
+    let outputs = Runner::new(&project, &http)
+        .run("main", Map::new(), &mut globals)
+        .await
+        .unwrap();
+
+    assert_eq!(outputs, object(json!({"name": "ada"})));
+    assert_eq!(globals.get("token"), Some(&json!("fresh")));
+    let seen: Vec<_> = http
+        .requests()
+        .iter()
+        .map(|r| {
+            (
+                r.url.clone(),
+                r.headers.get("Authorization").cloned().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            ("http://api/me".to_owned(), "Bearer stale".to_owned()),
+            ("http://api/login".to_owned(), String::new()),
+            ("http://api/me".to_owned(), "Bearer fresh".to_owned()),
+            // The following step continues with the refreshed token, no relogin.
+            ("http://api/me".to_owned(), "Bearer fresh".to_owned()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn exceeding_max_recoveries_is_a_clear_error() {
+    let project = recovery_project(2);
+    let http = FakeHttp::new(|request| {
+        if request.url.ends_with("/login") {
+            reply(200, json!({"token": "still-bad"}))
+        } else {
+            reply(401, json!({}))
+        }
+    });
+    let err = Runner::new(&project, &http)
+        .run("main", Map::new(), &mut object(json!({"token": "x"})))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        err.root_cause(),
+        RunError::RecoveryExhausted { status: 401, max: 2, run, .. } if run == "relogin"
+    ));
+    let logins = http
+        .requests()
+        .iter()
+        .filter(|r| r.url.ends_with("/login"))
+        .count();
+    assert_eq!(logins, 2);
+    assert!(err.to_string().contains("2 recovery attempt(s)"));
+}
+
+#[tokio::test]
+async fn failing_recovery_workflow_is_reported_as_recovery_failure() {
+    let project = recovery_project(1);
+    let http = FakeHttp::new(|request| {
+        if request.url.ends_with("/login") {
+            reply(500, json!({}))
+        } else {
+            reply(401, json!({}))
+        }
+    });
+    let err = Runner::new(&project, &http)
+        .run("main", Map::new(), &mut object(json!({"token": "x"})))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err.root_cause(),
+        RunError::UnexpectedStatus { status: 500, .. }
+    ));
+    assert!(err.to_string().contains("recovery workflow `relogin`"));
+}
+
+#[tokio::test]
+async fn statuses_without_a_policy_are_not_recovered() {
+    let project = recovery_project(1);
+    let http = FakeHttp::new(|_| reply(403, json!({})));
+    let err = Runner::new(&project, &http)
+        .run("main", Map::new(), &mut object(json!({"token": "x"})))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err.root_cause(),
+        RunError::UnexpectedStatus { status: 403, .. }
+    ));
+    assert_eq!(http.requests().len(), 1);
+}

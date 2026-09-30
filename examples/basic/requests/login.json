@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "{{inputs.base_url}}/auth/login",
+  "headers": { "Content-Type": "application/json" },
+  "body": { "username": "{{inputs.username}}", "password": "{{inputs.password}}" },
+  "inputs": { "base_url": {}, "username": {}, "password": {} },
+  "outputs": { "token": { "from": "body", "path": "$.token" } }
+}

@@ -1,0 +1,7 @@
+{
+  "method": "POST",
+  "url": "{{inputs.base_url}}/auth/refresh",
+  "headers": { "Authorization": "Bearer {{inputs.token}}" },
+  "inputs": { "base_url": {}, "token": {} },
+  "outputs": { "token": { "from": "body", "path": "$.token" } }
+}
